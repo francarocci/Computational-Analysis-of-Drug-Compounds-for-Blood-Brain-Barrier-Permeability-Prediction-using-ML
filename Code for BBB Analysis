@@ -1,0 +1,382 @@
+#import numpy and pandas and pickle
+import pandas as pd
+import numpy as np
+import pickle
+
+#install rdkit-pypi and import rdkit.Chem modules
+!pip install rdkit-pypi
+from rdkit import Chem
+from rdkit.Chem import DataStructs
+from rdkit.Chem import AllChem
+
+#import rdkit.Chem modules features
+from rdkit.ML.Descriptors.MoleculeDescriptors import MolecularDescriptorCalculator
+from rdkit.ML.Descriptors import MoleculeDescriptors
+from rdkit.Chem import Descriptors
+
+#give access to my google drive
+from google.colab import drive
+drive.mount('/content/drive')
+
+#data aquisition and loading of excel file from directory and visualise it
+bbb_data = pd.read_excel('/content/drive/MyDrive/Colab Notebooks/BBB_datasets.xlsx')
+bbb_data.head()
+
+#check the SMILES column
+smiles = bbb_data['SMILES']
+smiles
+
+#create a list to define the molecular descriptors of the drugs
+mol_descriptors = []
+
+#loop through every drug and calculate the molecular descriptors
+for i in bbb_data['SMILES']:
+    moler = Chem.MolFromSmiles(i)
+    if True:
+        try:
+            calc = MoleculeDescriptors.MolecularDescriptorCalculator([x[0] for x in Descriptors._descList])
+            vector = calc.CalcDescriptors(moler)
+            mol_descriptors.append(vector)
+        except:
+            print(i)
+
+#print list of all mol descriptors
+Descriptors._descList
+
+#create an array of the mol descriptors
+cols_mols = np.asarray(Descriptors._descList)
+descriptors_data = pd.DataFrame(mol_descriptors, columns = cols_mols)
+
+#print the dataset to visualise it
+descriptors_data
+
+#rename the columns
+new_columns_names = {}
+for name in descriptors_data:
+    new_columns_names [name] = name[0]
+print(new_columns_names)
+mol_df = descriptors_data.rename(columns = new_columns_names)
+
+#specify the file path to save the new dataset into an excel file
+mol_descriptors_file = '/content/drive/MyDrive/Colab Notebooks/molecular_descriptors.xlsx'
+mol_df.to_excel(mol_descriptors_file, index=False)
+
+print(f"File saved to {mol_descriptors_file} path.")
+
+#concatenate the original dataset with the new one conatining the molecular descriptors
+descriptors_data_with_info = pd.concat([bbb_data.reset_index(drop=True), mol_df], axis=1)
+
+#specify the output Excel file path
+mol_descriptors_file = '/content/drive/MyDrive/Colab Notebooks/molecular_descriptors.xlsx'
+descriptors_data_with_info.to_excel(mol_descriptors_file, index=False)
+
+print(f"File saved to {mol_descriptors_file} path.")
+
+#inspect the dataset and its structure to visualise if it is concatenated
+concat_df = pd.read_excel(mol_descriptors_file)
+print("Dataset Information:")
+concat_df.info()
+concat_df.describe()
+
+#visualise if the dataset was concatenated
+print("\nFirst 5 Rows:")
+concat_df.head()
+
+#check if the dataset is balanced
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+#set the aesthetic style of the plots
+sns.set_style("whitegrid")
+
+#create a vertical countplot for the 'Class' column in your dataset
+plt.figure(figsize=(8, 6))
+ax = sns.countplot(x='Class', data=concat_df, color='lightgray')
+
+#set colors for each bar
+colors = ['skyblue', 'orange'] * (len(ax.patches) // 2)
+for bar, color in zip(ax.patches, colors):
+    bar.set_color(color)
+
+#add labels and title for clarity
+ax.set_xlabel('Class', fontsize=12)
+ax.set_ylabel('Count', fontsize=12)
+ax.set_title('Incidence of Drugs Permeability in Dataset', fontsize=15)
+
+#loop through the bars and annotate the frequencies
+for p in ax.patches:
+    ax.text(p.get_x() + p.get_width() / 2., p.get_height(), '%d' % int(p.get_height()),
+            fontsize=12, ha='center', va='bottom')
+
+#remove the top and right spines for a cleaner look
+sns.despine()
+
+#show plot
+plt.show()
+
+#pre-processing methods to check the missing values
+concat_df.isna().sum().sum()
+
+#visualise the rows with missing values
+rows_with_missing_data = concat_df[concat_df.isna().any(axis=1)]
+rows_with_missing_data
+
+#check for duplicates and display them
+duplicates = concat_df.duplicated().sum()
+duplicates
+
+#remove rows with any missing values
+clean_df = concat_df.dropna()
+concat_df = clean_df
+
+#check if the missing values were removed
+concat_df.info()
+
+#visually inspect the dataset
+concat_df
+
+#perform standardisation on the numerical features
+#assume all other columns except 'Drug Name', 'SMILES', and 'Class' are features
+features = concat_df.select_dtypes(include=['float64', 'int64']).columns
+x = StandardScaler().fit_transform(concat_df[features])
+
+#perform PCA
+pca = PCA(n_components=2)
+principalComponents = pca.fit_transform(x)
+explained_variance_ratio = pca.explained_variance_ratio_ * 100
+
+#construct a DataFrame with the principal components and the category for colouring
+pca_df = pd.DataFrame(data=principalComponents, columns=['PC1', 'PC2'])
+pca_df['Category'] = concat_df['Class'].values
+
+#create a scatterplot of the two principal components
+plt.figure(figsize=(8, 6))
+categories = np.unique(pca_df['Category'])
+colors = ['red', 'blue']  #colors for BBB- and BBB+, respectively
+
+for category, color in zip(categories, colors):
+    indicesToKeep = pca_df['Category'] == category
+    plt.scatter(pca_df.loc[indicesToKeep, 'PC1'],
+                pca_df.loc[indicesToKeep, 'PC2'],
+                c=color,
+                s=50)
+
+plt.title('PCA of Molecular Descriptors')
+plt.xlabel(f'PC1 - {explained_variance_ratio[0]:.2f}% of Variance')
+plt.ylabel(f'PC2 - {explained_variance_ratio[1]:.2f}% of Variance')
+plt.legend(categories)
+plt.grid(True)
+plt.show()
+
+#prepare the data to start analysing the relevant features
+columns_selection = concat_df.iloc[:,3:211]
+
+#assign the sets
+X = columns_selection
+y = concat_df['Class']
+
+#check their lenghts
+print("X Size:", X.size)
+print("y Size:", y.size)
+
+
+#perform RFE to select top 10 features for relevance in the dataset
+from sklearn.feature_selection import RFE
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
+
+#encode the target variable since RFE requires numeric values
+encoder = LabelEncoder()
+y_encoded = encoder.fit_transform(y)
+
+#initialise the RF classifier
+rf = RandomForestClassifier(n_estimators=100, random_state=42)
+
+#initialise RFE with the classifier and select 10 features
+rfe = RFE(estimator=rf, n_features_to_select=10)
+
+#fit the RFE model
+rfe.fit(X, y_encoded)
+
+#save the RFE model to a pickle file
+pickle_filename = 'rfe_model.pkl'  #select the path where you want to save this file
+with open(pickle_filename, 'wb') as file:
+    pickle.dump(rfe, file)
+
+#extract the names of the top 10 selected features and create a list
+selected_features_list = list(X.columns[rfe.support_])
+
+#print the list of the top 10 selected features
+print("Top 10 selected features based on their relevance:")
+selected_features_list
+
+#extract the top 10 selected features from the DataFrame
+selected_features = concat_df[selected_features_list[:10]]
+
+#calculate a correlation matrix
+correlation_matrix = selected_features.corr()
+
+#plot the heatmap to visually detect the pairs correlations
+plt.figure(figsize=(10, 8))
+sns.heatmap(correlation_matrix, annot=True, cmap='Greens', fmt=".2f")
+plt.title('Heatmap Correlation of the 10 Most Relevant Features')
+plt.show()
+
+#create a boxplot to represent the features
+concat_df[selected_features_list].boxplot(figsize=(10, 5))
+plt.title('Boxplot of the 10 Most Relevant Features')
+plt.ylabel('Values')
+plt.xlabel('Most Relevant Features')
+plt.xticks(rotation=40, ha='right')
+plt.show()
+
+#libraries needed to perform ML models
+import sys
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report
+from sklearn.metrics import confusion_matrix
+
+#evaluation libraries
+from sklearn.metrics import accuracy_score, f1_score, matthews_corrcoef
+
+#validation libraries
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import KFold
+from sklearn.model_selection import cross_val_score
+
+#encode the target variable since the ML models require numeric values
+encoder = LabelEncoder()
+y_encoded = encoder.fit_transform(y)
+print(list(encoder.classes_))  #shows the order of label encoding
+
+#split the dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42)
+
+#scale the features necessary for SVM and Logistic Regression
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+#SVM model
+svm_model = SVC(kernel='rbf', random_state=42, max_iter=10000)
+svm_model.fit(X_train_scaled, y_train)
+svm_predictions = svm_model.predict(X_test_scaled)
+
+#RF model
+rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+rf_model.fit(X_train, y_train)  #no need to scale features for Random Forest
+rf_predictions = rf_model.predict(X_test)
+
+#LR model
+logreg_model = LogisticRegression(random_state=42, max_iter=10000, solver='saga')
+logreg_model.fit(X_train_scaled, y_train)
+logreg_predictions = logreg_model.predict(X_test_scaled)
+
+#calculate MCC for each model
+svm_mcc = matthews_corrcoef(y_test, svm_predictions)
+rf_mcc = matthews_corrcoef(y_test, rf_predictions)
+logreg_mcc = matthews_corrcoef(y_test, logreg_predictions)
+
+#print the classification report and MCC for each model
+print("SVM Classification Report:\n", classification_report(y_test, svm_predictions))
+print("SVM Matthews Correlation Coefficient:", svm_mcc)
+
+print("Random Forest Classification Report:\n", classification_report(y_test, rf_predictions))
+print("Random Forest Matthews Correlation Coefficient:", rf_mcc)
+
+print("Logistic Regression Classification Report:\n", classification_report(y_test, logreg_predictions))
+print("Logistic Regression Matthews Correlation Coefficient:", logreg_mcc)
+
+#pickle the models and predictions for future use or analysis
+with open('model_data.pkl', 'wb') as file:
+    pickle.dump({'svm_model': svm_model,
+                 'rf_model': rf_model,
+                 'logreg_model': logreg_model,
+                 'svm_predictions': svm_predictions,
+                 'rf_predictions': rf_predictions,
+                 'logreg_predictions': logreg_predictions,
+                 'svm_mcc': svm_mcc,
+                 'rf_mcc': rf_mcc,
+                 'logreg_mcc': logreg_mcc}, file)
+
+#create confusion matrix plot for SVM model
+svm_confusion_matrix = confusion_matrix(y_test, svm_predictions, normalize='true')
+sns.heatmap(svm_confusion_matrix, annot=True, cmap='YlGnBu')
+plt.xlabel('Predicted')
+plt.ylabel('True')
+plt.title('SVM Confusion Matrix')
+plt.show()
+
+#create confusion matrix plot for RF model
+rf_confusion_matrix = confusion_matrix(y_test, rf_predictions, normalize='true')
+sns.heatmap(rf_confusion_matrix, annot=True, cmap='BuPu')
+plt.xlabel('Predicted')
+plt.ylabel('True')
+plt.title('Random Forest Confusion Matrix')
+plt.show()
+
+#create confusion matrix plot for LR model
+logreg_confusion_matrix = confusion_matrix(y_test, logreg_predictions, normalize='true')
+sns.heatmap(logreg_confusion_matrix, annot=True, cmap='Oranges')
+plt.xlabel('Predicted')
+plt.ylabel('True')
+plt.title('Logistic Regression Confusion Matrix')
+plt.show()
+
+#define number of folds for k-fold cross-validation
+k_folds = 5
+
+#SVM Cross-Validation
+svm_cv_scores = cross_val_score(svm_model, X_train_scaled, y_train, cv=k_folds, scoring='accuracy')
+print(f'SVM CV Accuracy: {svm_cv_scores.mean():.3f} (+/- {svm_cv_scores.std():.3f})')
+
+#RF Cross-Validation
+rf_cv_scores = cross_val_score(rf_model, X_train, y_train, cv=k_folds, scoring='accuracy')
+print(f'Random Forest CV Accuracy: {rf_cv_scores.mean():.3f} (+/- {rf_cv_scores.std():.3f})')
+
+#LR Cross-Validation
+logreg_cv_scores = cross_val_score(logreg_model, X_train_scaled, y_train, cv=k_folds, scoring='accuracy')
+print(f'Logistic Regression CV Accuracy: {logreg_cv_scores.mean():.3f} (+/- {logreg_cv_scores.std():.3f})')
+
+#calculate the MCC for cross-validation
+from sklearn.metrics import make_scorer
+mcc_scorer = make_scorer(matthews_corrcoef)
+
+#SVM MCC Cross-Validation
+svm_mcc_cv_scores = cross_val_score(svm_model, X_train_scaled, y_train, cv=k_folds, scoring=mcc_scorer)
+print(f'SVM CV MCC: {svm_mcc_cv_scores.mean():.3f} (+/- {svm_mcc_cv_scores.std():.3f})')
+
+#RF MCC Cross-Validation
+rf_mcc_cv_scores = cross_val_score(rf_model, X_train, y_train, cv=k_folds, scoring=mcc_scorer)
+print(f'Random Forest CV MCC: {rf_mcc_cv_scores.mean():.3f} (+/- {rf_mcc_cv_scores.std():.3f})')
+
+#LR MCC Cross-Validation
+logreg_mcc_cv_scores = cross_val_score(logreg_model, X_train_scaled, y_train, cv=k_folds, scoring=mcc_scorer)
+print(f'Logistic Regression CV MCC: {logreg_mcc_cv_scores.mean():.3f} (+/- {logreg_mcc_cv_scores.std():.3f})')
+
+#create a list of the cross-validation results to save it into a pickle file
+cross_val_results = {
+    'svm': {
+        'cv_scores': cross_val_score(svm_model, X_train_scaled, y_train, cv=k_folds, scoring='accuracy'),
+        'mcc_cv_scores': cross_val_score(svm_model, X_train_scaled, y_train, cv=k_folds, scoring=mcc_scorer)
+    },
+    'rf': {
+        'cv_scores': cross_val_score(rf_model, X_train, y_train, cv=k_folds, scoring='accuracy'),
+        'mcc_cv_scores': cross_val_score(rf_model, X_train, y_train, cv=k_folds, scoring=mcc_scorer)
+    },
+    'logreg': {
+        'cv_scores': cross_val_score(logreg_model, X_train_scaled, y_train, cv=k_folds, scoring='accuracy'),
+        'mcc_cv_scores': cross_val_score(logreg_model, X_train_scaled, y_train, cv=k_folds, scoring=mcc_scorer)
+    }
+}
+
+#save the pickle file
+pickle_filename = 'cross_val_results.pkl'
+with open(pickle_filename, 'wb') as file:
+    pickle.dump(cross_val_results, file)
+
